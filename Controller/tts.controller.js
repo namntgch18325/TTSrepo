@@ -1,24 +1,46 @@
 const FPT_AI_API =  require("../API/ttsFPT.js");
+// use a map to save a lot of resolve()
+const taskMap = new Map(); // biến đánh dấu trạng thái sync
 
-exports.getOnlyMP3 = async (req,res) =>{ // chỉ res về file MP3 thông thường, không có timstampe(thời gian đọc từng từ trong mp3)
-    FPT_AI_API.FPT_TTS(req.body.text).then((data)=>{
-        res.status(200).json({"mp3":data}); //trả về cho client link file : MP3, nhưng ngay thời điểm này, file MP3 chưa thể nghe ngay
-        // cần đợi FPT call API CallBackUrl phía dưới
-    })    
-    .catch(err=>{
-        console.log(err);
-        res.status(403).json({"status":"faild to change"});
-    })
+exports.getOnlyMP3 = async (req,res) =>{ 
+        console.log("received req from user")
+        const data = await  FPT_AI_API.FPT_TTS(req.body.text) // sync func
+        console.log("Done send req to FPT AI")
+        const result = await waitForCallback(data); // sync func
+        console.log("Done process")
+        res.status(200).json({"mp3":data}); 
 }
-// *=> em muốn là : KHI A GỬI req tứi server, server => FPT AI để lấy về link mp3, 
-//chờ cho FPT AI gửi req callback tới => lúc này mới res lại về cho client.
+const waitForCallback = (taskId) => { // hàm trung gian 
+    console.log("start waitForCallback")
+    return new Promise((resolve, reject) => {
+        const task = {};
+        task.id = taskId; // khai báo biến này để check trạng thái 
+        task.onComplete = (data) => { // resolved
+            resolve(data);
+            console.log("Resolved process")
+        };
+        task.onError = () => {
+            reject();
+        };
+        taskMap.set(task.id, task); // set taskMap để đợi đến khi callBackUrl xong
+    });
+}; 
 
-exports.CallBackUrl = (req,res) =>{ //FPT URL CALL BACK SẼ GỌI FUNCTION NÀY
-        //sau khi FPT call back url, nó sẽ gửi tới server của mình 1 cái request để báo rằng file MP3 đã sẵn sàng
-        // Em muốn lúc này mới response về cho client của a link file MP3.
+exports.CallBackUrl = (req,res) =>{ 
+        console.log("CallBackUrl is called")
+        let result;
+        let taskId = req.body.message
         if(req.body.success == true) {
             //success == true => file MP3 đã sẵn sàng
-        }
+            result = "solved"
+        }else result = "rejected"
+        //báo complete để trả về resolve cho waitForCallback
+        console.log("Received Callback")
+        taskMap.get(taskId).onComplete(result);
+        console.log("Completed Callback")
+        //clean
+        taskMap.delete(taskId);
+        
 }
 
 exports.getMp3WihtTimestam = (req,res) =>{
